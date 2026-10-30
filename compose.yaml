@@ -1,0 +1,21 @@
+services:
+  signal-api:
+    image: bbernhard/signal-cli-rest-api:latest
+    restart: unless-stopped
+    environment:
+      - MODE=json-rpc            # required: the forwarder uses the websocket receive endpoint
+    ports:
+      - "8080:8080"              # only needed for the one-time linking step; can be removed after
+    volumes:
+      - ./signal-cli-config:/home/.local/share/signal-cli
+
+  forwarder:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - signal-api
+    env_file: .env
+    environment:
+      - SIGNAL_API_URL=http://signal-api:8080
+    volumes:
+      - ./data:/data             # remembers forwarded messages so deletes can follow
