@@ -45,7 +45,7 @@ Set up steps below
 - **Edits:** editing a message in a source group edits the forwarded copy (it shows as "Edited" in Signal). If the bot doesn't know the original (forwarded before this feature, or older than `MAP_RETENTION_DAYS`), it posts the new text as a separate "(edited)" message instead.
 - **Deletes:** when someone uses "Delete for everyone" in a source group, the bot deletes its forwarded copies in the target groups. It keeps a small database in `./data` to know which copies belong to which original, so keep that folder mounted. Messages forwarded before this feature was added, or older than `MAP_RETENTION_DAYS`, can't be deleted this way. Set `FORWARD_DELETES=false` to turn it off.
 - Link previews are copied from the original message (title, description, thumbnail). This needs a signal-cli-rest-api version with `link_preview` support on `/v2/send`; on older versions the message is still forwarded, just without the preview.
-- Reactions, deletions, typing indicators and read receipts are not forwarded.
+- Reactions, typing indicators and read receipts are not forwarded.
 - If you linked your own account, the messages *you* send in the source group arrive as sync messages, so they are not forwarded. If you need them forwarded, use a dedicated bot number.
 - Only one client should read messages from the account. Don't run another `receive` loop against the same number.
 - Without Docker: `pip install -r requirements.txt`, then `SIGNAL_API_URL=http://localhost:8080 SIGNAL_NUMBER=... SOURCE_GROUP=... TARGET_GROUP=... python forwarder.py`.
