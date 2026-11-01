@@ -1,5 +1,6 @@
+#!/usr/bin/env python3
 """
-Signal group message forwarder.
+Signal group forwarder.
 
 Listens to a signal-cli-rest-api instance (MODE=json-rpc) over its websocket
 and re-posts messages between groups according to a set of routes, including
@@ -43,7 +44,7 @@ import time
 
 import requests
 
-VERSION = "1.5 (fix send response parsing, no resend on errors)"
+VERSION = "1.6 (repeated edits)"
 log = logging.getLogger("forwarder")
 
 OBJECT_REPLACEMENT = "￼"  # Signal uses this as the placeholder for @mentions
@@ -183,6 +184,13 @@ class MessageStore:
         return self.db.execute("SELECT target, sent_ts FROM forwards WHERE src_group=? AND src_ts=?",
                                (src_group, int(src_ts))).fetchall()
 
+    def forget_copies(self, src_group, copies):
+        """Remove every remembered version that points at the given forwarded copies."""
+        for target, sent_ts in copies:
+            self.db.execute("DELETE FROM forwards WHERE src_group=? AND target=? AND sent_ts=?",
+                            (src_group, target, int(sent_ts)))
+        self.db.commit()
+
     def pop(self, src_group, src_ts):
         rows = self.db.execute("SELECT target, sent_ts FROM forwards WHERE src_group=? AND src_ts=?",
                                (src_group, int(src_ts))).fetchall()
@@ -283,6 +291,7 @@ class Forwarder:
             src_ts = env["editMessage"].get("targetSentTimestamp")
         else:
             src_ts = (msg or {}).get("timestamp") or env.get("timestamp")
+        rev_ts = (msg or {}).get("timestamp") or env.get("timestamp")  # this version's timestamp
         if not msg:
             return False  # receipts, typing indicators, sync messages, etc.
 
@@ -364,14 +373,24 @@ class Forwarder:
                 # and retrying caused duplicates.
                 sent_ts = self.api.send(target, body, b64, preview, edit_timestamp=edit_ts)
                 sent += 1
-                if edit_ts:
-                    continue  # edits keep the original timestamp; mapping stays the same
-                if not sent_ts:
+                if not sent_ts and not edit_ts:
                     log.warning("API gave no timestamp for the forwarded message; "
                                 "edits/deletes of it can't be mirrored")
-                if sent_ts and src_ts:
+                # Remember every version of the message, not just the original: a later edit or
+                # delete may point at the previous edit's timestamp rather than the original's.
+                # Each source version maps to our matching version, so we mirror whichever the
+                # sender's app uses.
+                keys = set()
+                if edit_ts:
+                    our_ts = sent_ts or edit_ts
+                    if rev_ts:
+                        keys.add(rev_ts)
+                else:
+                    our_ts = sent_ts
+                    keys.update(k for k in (src_ts, rev_ts) if k)
+                for k in keys if our_ts else ():
                     try:
-                        self.store.record(group, src_ts, target, sent_ts)
+                        self.store.record(group, k, target, our_ts)
                     except Exception as e:
                         log.warning("Could not record forwarded message: %s", e)
             except Exception as e:
@@ -388,6 +407,8 @@ class Forwarder:
         if not self.forward_deletes or not src_ts:
             return False
         copies = self.store.pop(group, src_ts)
+        if copies:
+            self.store.forget_copies(group, copies)  # drop the other remembered versions too
         if not copies:
             log.info("No forwarded copies known for that message (forwarded before the update, "
                      "or the message map isn't persisted)")
